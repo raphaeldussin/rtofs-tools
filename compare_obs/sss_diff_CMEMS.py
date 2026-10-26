@@ -4,117 +4,21 @@
 # The code has been reviewed, edited, and validated by NWS staff.
 
 import argparse
-from datetime import datetime, timedelta
-import os
+from datetime import datetime
 from glob import glob
+import os
 import warnings
-import xarray as xr
+
 import xesmf
 
 from grids import create_grid_CMEMS, create_grid_RTOFS, create_regular_grid
 from plotting import plot_glo_sss_obs_bias_3rows
+from readers import read_CMEMS, read_HYCOM, read_MOM
 from utils import str2bool, valid_date
 
 warnings.filterwarnings("ignore", module="xesmf")
 
-def read_CMEMS_sss(args, var="sos"):
-    """Read Sea Surface Salinity (SSS) from CMEMS observations.
 
-    Parameters
-    ----------
-    args : argparse.Namespace
-        Parsed command-line arguments containing the base date ('date'),
-        observations directory ('obs'), and forecast/nowcast offset ('days_offset').
-    var : str, optional
-        The variable name to extract from the CMEMS file. Default is "sos".
-
-    Returns
-    -------
-    xarray.DataArray
-        The 2D squeezed and offset-adjusted CMEMS SSS data array.
-    """
-    # change obs date based on forecast/nowcast offset
-    date_offset = args.date + timedelta(days=args.days_offset)
-    cdate = datetime.strftime(date_offset, "%Y%m%d")
-    obsfile_thisdate = glob(f"{args.obs}/dataset-sss-ssd-*-daily_{cdate}T1200Z_P*.nc")
-    print(obsfile_thisdate)
-    # there should be only one file per date
-    assert len(obsfile_thisdate) == 1
-    ncfile = obsfile_thisdate[0]
-    print(f"reading {var} from {ncfile}")
-    sss = xr.open_dataset(ncfile)[var].squeeze()
-    return sss
-
-
-def read_HYCOM_sss(args, var="sss"):
-    """Read Sea Surface Salinity (SSS) from HYCOM RTOFS output.
-
-    Parameters
-    ----------
-    args : argparse.Namespace
-        Parsed command-line arguments containing the reference model directory
-        ('ref_model'), the base date ('date'), and the forecast/nowcast offset
-        ('days_offset' or 'use_forecast_t0').
-    var : str, optional
-        The variable name to extract from the HYCOM file. Default is "sss".
-
-    Returns
-    -------
-    xarray.DataArray
-        The 2D HYCOM SSS data array (with the extra boundary row removed).
-    """
-    cdate = datetime.strftime(args.date, "%Y%m%d")
-    days_offset = args.days_offset
-    if (days_offset > 0.0) or args.use_forecast_t0:  # is forecast
-        tplus = 24 * days_offset
-        ncfile = (
-            f"{args.ref_model}/rtofs.{cdate}/rtofs_glo_2ds_f{tplus:03g}_prog.nc"
-        )
-    else:
-        if days_offset < -1:
-            raise ValueError("days offset cannot be less than -1 day")
-        tminus = 24 * (1 + days_offset)
-        ncfile = (
-            f"{args.ref_model}/rtofs.{cdate}/rtofs_glo_2ds_n{tminus:03g}_prog.nc"
-        )
-    print(f"reading {var} from {ncfile}")
-    sss = xr.open_dataset(ncfile)[var].squeeze()[:-1, :]  # hycom has one more row
-    return sss
-
-
-def read_MOM_sss(args, var="sss"):
-    """Read Sea Surface Salinity (SSS) from MOM RTOFS output.
-
-    Parameters
-    ----------
-    args : argparse.Namespace
-        Parsed command-line arguments containing the dev model directory
-        ('dev_model'), the base date ('date'), and the forecast/nowcast offset
-        ('days_offset').
-    var : str, optional
-        The variable name to extract from the MOM file. Default is "sss".
-
-    Returns
-    -------
-    xarray.DataArray
-        The 2D MOM SSS data array.
-    """
-    # days offset can be non-integer values
-    cdate = datetime.strftime(args.date, "%Y%m%d")
-    days_offset = args.days_offset
-    if days_offset > 0.0:  # is forecast
-        tplus = 24 * days_offset
-        ncfile = (
-            f"{args.dev_model}/rtofs.{cdate}/rtofs_glo_2ds.f{tplus:03g}.nc"
-        )
-    else:  # days_offset <=0 is nowcast
-        tminus = -1 * 24 * days_offset
-        ncfile = (
-            f"{args.dev_model}/rtofs.{cdate}/rtofs_glo_2ds.tm{tminus:03g}.nc"
-        )
-    print(f"reading {var} from {ncfile}")
-    sss = xr.open_dataset(ncfile)[var].squeeze()
-    return sss
 
 
 # --- main
@@ -196,10 +100,12 @@ def main():
     else:
         print("Model Grid      : Not provided")
 
-    sss_cmems = read_CMEMS_sss(args)
+    sss_cmems = read_CMEMS(args, "sos")
     if args.ref_model_is_hycom:
-        sss_ref = read_HYCOM_sss(args)
-    sss_dev = read_MOM_sss(args)
+        sss_ref = read_HYCOM(args, "sss")
+    else:
+        sss_ref = read_MOM(args, "sss")
+    sss_dev = read_MOM(args, "sss")
 
     grid_1x1 = create_regular_grid()
     print("reg grid created")
