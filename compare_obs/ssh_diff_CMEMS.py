@@ -4,117 +4,21 @@
 # The code has been reviewed, edited, and validated by NWS staff.
 
 import argparse
-from datetime import datetime, timedelta
-import os
+from datetime import datetime
 from glob import glob
+import os
 import warnings
-import xarray as xr
+
 import xesmf
 
 from grids import create_grid_CMEMS_SSH, create_grid_RTOFS, create_regular_grid
 from plotting import plot_glo_ssh_obs_bias_3rows
+from readers import read_CMEMS, read_HYCOM, read_MOM
 from utils import str2bool, valid_date
 
 warnings.filterwarnings("ignore", module="xesmf")
 
-def read_CMEMS_ssh(args, var="adt"):
-    """Read Sea Surface Height (SSH) from CMEMS observations.
 
-    Parameters
-    ----------
-    args : argparse.Namespace
-        Parsed command-line arguments containing the base date ('date'),
-        observations directory ('obs'), and forecast/nowcast offset ('days_offset').
-    var : str, optional
-        The variable name to extract from the CMEMS file. Default is "ssh".
-
-    Returns
-    -------
-    xarray.DataArray
-        The 2D squeezed and offset-adjusted CMEMS SSH data array.
-    """
-    # change obs date based on forecast/nowcast offset
-    date_offset = args.date + timedelta(days=args.days_offset)
-    cdate = datetime.strftime(date_offset, "%Y%m%d")
-    obsfile_thisdate = glob(f"{args.obs}/dt_global_allsat_phy_l4_{cdate}_*.nc")
-    print(obsfile_thisdate)
-    # there should be only one file per date
-    assert len(obsfile_thisdate) == 1
-    ncfile = obsfile_thisdate[0]
-    print(f"reading {var} from {ncfile}")
-    ssh = xr.open_dataset(ncfile)[var].squeeze()
-    return ssh
-
-
-def read_HYCOM_ssh(args, var="ssh"):
-    """Read Sea Surface Height (SSH) from HYCOM RTOFS output.
-
-    Parameters
-    ----------
-    args : argparse.Namespace
-        Parsed command-line arguments containing the reference model directory
-        ('ref_model'), the base date ('date'), and the forecast/nowcast offset
-        ('days_offset' or 'use_forecast_t0').
-    var : str, optional
-        The variable name to extract from the HYCOM file. Default is "ssh".
-
-    Returns
-    -------
-    xarray.DataArray
-        The 2D HYCOM SSH data array (with the extra boundary row removed).
-    """
-    cdate = datetime.strftime(args.date, "%Y%m%d")
-    days_offset = args.days_offset
-    if (days_offset > 0.0) or args.use_forecast_t0:  # is forecast
-        tplus = 24 * days_offset
-        ncfile = (
-            f"{args.ref_model}/rtofs.{cdate}/rtofs_glo_2ds_f{tplus:03g}_diag.nc"
-        )
-    else:
-        if days_offset < -1:
-            raise ValueError("days offset cannot be less than -1 day")
-        tminus = 24 * (1 + days_offset)
-        ncfile = (
-            f"{args.ref_model}/rtofs.{cdate}/rtofs_glo_2ds_n{tminus:03g}_diag.nc"
-        )
-    print(f"reading {var} from {ncfile}")
-    ssh = xr.open_dataset(ncfile)[var].squeeze()[:-1, :]  # hycom has one more row
-    return ssh
-
-
-def read_MOM_ssh(args, var="ssh"):
-    """Read Sea Surface Height (SSH) from MOM RTOFS output.
-
-    Parameters
-    ----------
-    args : argparse.Namespace
-        Parsed command-line arguments containing the dev model directory
-        ('dev_model'), the base date ('date'), and the forecast/nowcast offset
-        ('days_offset').
-    var : str, optional
-        The variable name to extract from the MOM file. Default is "ssh".
-
-    Returns
-    -------
-    xarray.DataArray
-        The 2D MOM SSH data array.
-    """
-    # days offset can be non-integer values
-    cdate = datetime.strftime(args.date, "%Y%m%d")
-    days_offset = args.days_offset
-    if days_offset > 0.0:  # is forecast
-        tplus = 24 * days_offset
-        ncfile = (
-            f"{args.dev_model}/rtofs.{cdate}/rtofs_glo_2ds.f{tplus:03g}.nc"
-        )
-    else:  # days_offset <=0 is nowcast
-        tminus = -1 * 24 * days_offset
-        ncfile = (
-            f"{args.dev_model}/rtofs.{cdate}/rtofs_glo_2ds.tm{tminus:03g}.nc"
-        )
-    print(f"reading {var} from {ncfile}")
-    ssh = xr.open_dataset(ncfile)[var].squeeze()
-    return ssh
 
 
 # --- main
@@ -196,10 +100,12 @@ def main():
     else:
         print("Model Grid      : Not provided")
 
-    ssh_cmems = read_CMEMS_ssh(args)
+    ssh_cmems = read_CMEMS(args, "adt")
     if args.ref_model_is_hycom:
-        ssh_ref = read_HYCOM_ssh(args)
-    ssh_dev = read_MOM_ssh(args)
+        ssh_ref = read_HYCOM(args, "ssh")
+    else:
+        ssh_ref = read_MOM(args, "ssh")
+    ssh_dev = read_MOM(args, "ssh")
 
     grid_1x1 = create_regular_grid()
     print("reg grid created")
